@@ -10,6 +10,7 @@ import org.apache.spark.mllib.regression.GeneralizedLinearAlgorithm;
 import org.apache.spark.mllib.regression.LabeledPoint;
 import org.apache.spark.mllib.regression.LinearRegressionModel;
 import org.apache.spark.rdd.RDD;
+import org.iiitb.optimization.ConjugateGradientOptimizer;
 
 public class LinearRegressionWithCG extends GeneralizedLinearAlgorithm<LinearRegressionModel>
 {
@@ -24,12 +25,14 @@ public class LinearRegressionWithCG extends GeneralizedLinearAlgorithm<LinearReg
 	@Override
 	public Optimizer optimizer() 
 	{
-		GradientDescent gd = new GradientDescent(new LeastSquaresGradient(), new SimpleUpdater());
+		/*GradientDescent gd = new GradientDescent(new LeastSquaresGradient(), new SimpleUpdater());
 		gd.setMiniBatchFraction(1.0);
 		gd.setStepSize(0.001);
 		gd.setNumIterations(300);
 		
-		return gd;
+		return gd;*/
+		ConjugateGradientOptimizer op = new ConjugateGradientOptimizer(0.001, 50,12);
+		return op;
 
 	}
 	

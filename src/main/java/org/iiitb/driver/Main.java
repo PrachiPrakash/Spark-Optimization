@@ -38,10 +38,10 @@ public class Main
 		
 		final LinearRegressionModel model = lr.train(JavaRDD.toRDD(dataset));
 		System.out.println("hello");
-		System.out.println(model.weights().toString());
+		//System.out.println(model.weights().toString());
 		//System.out.println(dataset.take(1).toString());
 		
-		/*JavaRDD<Tuple2<Double, Double>> valuesAndPreds = dataset.map(
+		JavaRDD<Tuple2<Double, Double>> valuesAndPreds = dataset.map(
 				  new Function<LabeledPoint, Tuple2<Double, Double>>() {
 				    public Tuple2<Double, Double> call(LabeledPoint point) {
 				      double prediction = model.predict(point.features());
@@ -58,7 +58,8 @@ public class Main
 				  }
 				).rdd()).mean();
 		
-				System.out.println("training Mean Squared Error = " + MSE);*/
+				System.out.println("training Mean Squared Error = " + MSE);
+				System.out.println("Final w = "+ model.weights());
 	}
 	
 	
