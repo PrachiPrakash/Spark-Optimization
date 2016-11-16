@@ -35,9 +35,10 @@ public class Main2
 		
 		});
 		
-		ConjugateGradientOptimizer op = new ConjugateGradientOptimizer(0.001, 50,12);
+		ConjugateGradientOptimizer op = new ConjugateGradientOptimizer(0.001, 50,10);
 		Vector w = Vectors.dense(new double[]{0.0,0.0,0.0}); 
 		w = op.optimize(JavaRDD.toRDD(dataset), w);
+		System.out.println(op.getNoCalls());
 		
 		
 		

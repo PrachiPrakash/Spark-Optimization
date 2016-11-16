@@ -29,15 +29,26 @@ public class ConjugateGradientOptimizer implements Optimizer
 	private int numIteration;
 	private int lineIteration;
 	private Gradient gd;
+	private int noCalls;
 	
 	
 	
+	public int getNoCalls() {
+		return noCalls;
+	}
+
+	public void setNoCalls(int noCalls) {
+		this.noCalls = noCalls;
+	}
+
 	public ConjugateGradientOptimizer(double lineConvTol, int numIteration,int lineIteration)
 	{
 		this.lineConvTol = lineConvTol;
 		this.numIteration = numIteration;
 		this.lineIteration = lineIteration;
+		this.noCalls = 0;
 		gd = new LeastSquaresGradient();
+		
 		
 	}
 
@@ -51,6 +62,7 @@ public class ConjugateGradientOptimizer implements Optimizer
 		Vector d= null;
 		Vector currGrad = null;
 		Vector nextGrad = null;
+		Vector wOld = null;
 		double beta = 0.0;
 		double nextAlpha = 0.0;
 		
@@ -67,7 +79,7 @@ public class ConjugateGradientOptimizer implements Optimizer
 				 BLAS.scal(-1.0, d);
 			 }
 			 
-			 nextAlpha = getArmigo(da, w, sz, jsc, currGrad, d);
+			 nextAlpha = strongWolfe(da, w, wOld, sz, jsc, currGrad, d);
 				 
 			 System.out.println("alpha for iteration "+i+" is "+nextAlpha);
 			 
@@ -79,11 +91,12 @@ public class ConjugateGradientOptimizer implements Optimizer
 			 System.out.println("The value after "+ i +" iteration is"+w.toString());
 			 
 			 //convergence check
-			 if(isConverged(w, newW, 0.000001))
+			 if(isConverged(w, newW, 0.001))
 				 return newW;
 			 
 			 
 			 //calculate new beta and di+1
+			 wOld = w;
 			 w = newW;
 			 nextGrad = getGradient(da, w, sz, jsc); 
 			 //calculate the difference between new gradient and old gradient 
@@ -127,7 +140,7 @@ public class ConjugateGradientOptimizer implements Optimizer
 							JavaSparkContext jsc)
 	{
 		final Broadcast<Vector> bw = jsc.broadcast(w);
-		
+		noCalls++;
 		//compute the gradient vector of all the rows
 		JavaRDD<Vector> gradRDD = da.map(new Function<Tuple2<Object,Vector>,Vector>() {
 			public Vector call(Tuple2<Object, Vector> in)
@@ -224,7 +237,7 @@ public class ConjugateGradientOptimizer implements Optimizer
 			JavaSparkContext jsc)
 	{
 		final Broadcast<Vector> bw = jsc.broadcast(w);
-		
+		noCalls++;
 		//compute the gradient vector of all the rows
 		JavaRDD<Double> gradRDD = da.map(new Function<Tuple2<Object,Vector>,Double>() {
 			public Double call(Tuple2<Object, Vector> in)
@@ -283,4 +296,122 @@ public class ConjugateGradientOptimizer implements Optimizer
 	}
 	
 	
+	/**
+	 * This function implements the strong Wolfe Line search
+	 */
+	
+	public double strongWolfe(JavaRDD<Tuple2<Object, Vector>> da, Vector w, 
+			Vector wOld, final Broadcast<Double> sz,
+			JavaSparkContext jsc,Vector currGrad,
+			Vector d)
+	{
+		double c1 = 0.0001;
+		double c2 = 0.5;
+		
+		double alpha0 = 0.0;
+		double phi0 = getLoss(da, w, sz, jsc);
+		double phiA0 = 0.0;
+		double phiA1 = 0.0;
+		double derPhi0 = BLAS.dot(d, currGrad);
+		double alpha1 = 0.0;
+		double alpha2 = 0.0;
+		
+		if(wOld != null && derPhi0 != 0)
+			alpha1 = Math.min(1.0, 2*1.01*(phi0-getLoss(da, wOld, sz, jsc))/derPhi0);
+		else
+			alpha1 = 1.0;
+		
+		if(alpha1 < 0)
+			alpha1 = 1.0;
+		
+		phiA0 = phi0;
+		
+		//some optimization can be done
+		Vector temp = d.copy();
+		BLAS.scal(alpha1, temp);
+		BLAS.axpy(1.0, w, temp);
+		
+		phiA1 = getLoss(da, temp, sz, jsc);
+		
+		int maxIter = 10;
+		int i = 1;
+		
+		while(i <= maxIter){
+			
+			if(phiA1 > phi0 + c1*alpha1*derPhi0 ||
+			  (phiA1 >= phiA0 && i > 1)){
+				return zoom(da, w, sz, jsc, currGrad, d, alpha0, alpha1,phi0,derPhi0,phiA0,phiA1);
+			}
+			
+			double derPhiA1 = computeG(da, jsc, w, d, sz, alpha1);
+			if(Math.abs(derPhiA1) <= -c2 * derPhi0)
+				return alpha1;
+			
+			if(derPhiA1 >=0)
+				return zoom(da, w, sz, jsc, currGrad, d, alpha1, alpha0,phi0,derPhi0,phiA1,phiA0);
+			
+			alpha2 = 2*alpha1;
+			alpha0 = alpha1;
+			alpha1 = alpha2;
+			phiA0 = phiA1;
+			
+			//some optimization can be done
+			temp = d.copy();
+			BLAS.scal(alpha1, temp);
+			BLAS.axpy(1.0, w, temp);
+			phiA1 = getLoss(da, temp, sz, jsc);
+			i += 1;
+		}
+		
+		return alpha1;
+	}
+	
+	public double zoom(JavaRDD<Tuple2<Object, Vector>> da, Vector w, final Broadcast<Double> sz,
+			JavaSparkContext jsc,Vector currGrad,
+			Vector d,double alphaLow, double alphaHigh,
+			double phi0,double derPhi0,
+			double phiAL,double phiAH)
+	{
+		double c1 = 0.0001;
+		double c2 = 0.1;
+		double alphaj = 0.0;
+		double phiAlphaj = 0.0;
+		double derPhiAlphaj = 0.0;
+		Vector temp = null;
+		int maxIter = 50;
+		int i=1;
+		while(true){
+			
+			alphaj = (alphaLow+alphaHigh)/2;
+			
+			//some optimization can be done
+			temp = d.copy();
+			BLAS.scal(alphaj, temp);
+			BLAS.axpy(1.0, w, temp);
+			phiAlphaj = getLoss(da, temp, sz, jsc);
+			
+			if(phiAlphaj > phi0 + c1*alphaj*derPhi0 ||
+			  phiAlphaj >= phiAL){
+				alphaHigh = alphaj;
+				phiAH = phiAlphaj;
+			}
+			
+			else{
+				derPhiAlphaj = computeG(da, jsc, w, d, sz, alphaj);
+				if(Math.abs(derPhiAlphaj) <= -c2 * derPhi0)
+					return alphaj;
+				if(derPhiAlphaj*(alphaHigh-alphaLow) >= 0){
+					alphaHigh = alphaLow;
+					phiAH = phiAL;
+				}
+				alphaLow = alphaj;
+				phiAL = phiAlphaj;
+			}
+			i++;
+			if(i > maxIter)
+				return alphaj;
+		}
+		
+		
+	}
 }
