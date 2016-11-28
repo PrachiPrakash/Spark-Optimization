@@ -3,4 +3,5 @@ This is set of optimizer for spark in java which can be direct used for any of t
 ##Simple Gradient Descent:
  This is a implementation of gradient descent with no regularization.
 ##Congjugate Gradient Method
-This is a implementation of the conjugate gradient method to find the local minimum of function 
+This is a implementation of the nonlinear conjugate gradient method to find the local minimum of function. For line search it uses StrongWolfe condition with bracketing and for interpolation in the zoom phase it uses Quadratic interpolation technique.
+ 
