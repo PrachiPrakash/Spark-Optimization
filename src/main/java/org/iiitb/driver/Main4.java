@@ -4,20 +4,16 @@ import org.apache.spark.SparkConf;
 import org.apache.spark.SparkContext;
 import org.apache.spark.api.java.JavaDoubleRDD;
 import org.apache.spark.api.java.JavaRDD;
-import org.apache.spark.api.java.JavaSparkContext;
-import org.apache.spark.mllib.linalg.Vectors;
+import org.apache.spark.api.java.function.Function;
 import org.apache.spark.mllib.regression.LabeledPoint;
 import org.apache.spark.mllib.regression.LinearRegressionModel;
 import org.apache.spark.mllib.regression.LinearRegressionWithSGD;
 import org.apache.spark.mllib.util.MLUtils;
 import org.iiitb.mllib.LinearRegressionWithCG;
 
-import org.apache.spark.api.java.function.Function;
-
-
 import scala.Tuple2;
 
-public class Main 
+public class Main4 
 {
 	public static void main(String args[])
 	{
@@ -30,19 +26,18 @@ public class Main
 		
 		
 		
+		int numIteration = Integer.parseInt(args[1]);
+		double stepSize = Double.parseDouble(args[2]);
 		
 		
-		
-		LinearRegressionWithCG lr = new LinearRegressionWithCG();
+		LinearRegressionWithSGD lr = new LinearRegressionWithSGD();
 		//lr.setIntercept(true);
 		
 		long start = System.currentTimeMillis();
-		final LinearRegressionModel model = lr.train(JavaRDD.toRDD(dataset));
+		final LinearRegressionModel model = lr.train(JavaRDD.toRDD(dataset),numIteration,stepSize);
 		long end = System.currentTimeMillis();
 		
-		System.out.println("hello");
-		//System.out.println(model.weights().toString());
-		//System.out.println(dataset.take(1).toString());
+		
 		
 		JavaRDD<Tuple2<Double, Double>> valuesAndPreds = dataset.map(
 				  new Function<LabeledPoint, Tuple2<Double, Double>>() {
@@ -63,8 +58,6 @@ public class Main
 		
 				System.out.println("training Mean Squared Error = " + MSE);
 				System.out.println("Final w = "+ model.weights());
-				System.out.println("Time in millsec"+(end-start));
+				System.out.println("Training time in ms is: "+(end-start));
 	}
-	
-	
 }

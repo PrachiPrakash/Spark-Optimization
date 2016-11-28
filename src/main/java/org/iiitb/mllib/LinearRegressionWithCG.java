@@ -2,10 +2,10 @@ package org.iiitb.mllib;
 
 
 import org.apache.spark.mllib.linalg.Vector;
-import org.apache.spark.mllib.optimization.GradientDescent;
-import org.apache.spark.mllib.optimization.LeastSquaresGradient;
+
+
 import org.apache.spark.mllib.optimization.Optimizer;
-import org.apache.spark.mllib.optimization.SimpleUpdater;
+
 import org.apache.spark.mllib.regression.GeneralizedLinearAlgorithm;
 import org.apache.spark.mllib.regression.LabeledPoint;
 import org.apache.spark.mllib.regression.LinearRegressionModel;
@@ -31,7 +31,8 @@ public class LinearRegressionWithCG extends GeneralizedLinearAlgorithm<LinearReg
 		gd.setNumIterations(300);
 		
 		return gd;*/
-		ConjugateGradientOptimizer op = new ConjugateGradientOptimizer(0.001, 50,12);
+		ConjugateGradientOptimizer op = new ConjugateGradientOptimizer(0.001, 10,12);
+		
 		return op;
 
 	}

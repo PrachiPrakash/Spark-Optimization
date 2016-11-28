@@ -16,7 +16,8 @@ import org.apache.spark.mllib.linalg.Vectors;
 import org.apache.spark.mllib.optimization.Gradient;
 import org.apache.spark.mllib.optimization.LeastSquaresGradient;
 import org.apache.spark.mllib.optimization.Optimizer;
-
+import org.apache.spark.mllib.optimization.SimpleUpdater;
+import org.apache.spark.mllib.optimization.Updater;
 import org.apache.spark.rdd.RDD;
 
 import scala.Tuple2;
@@ -29,15 +30,21 @@ public class ConjugateGradientOptimizer implements Optimizer
 	private int numIteration;
 	private int lineIteration;
 	private Gradient gd;
+	private Updater up;
 	private int noCalls;
+	public int numLossCallBracket;
+	public int numGradCallsBracket;
+	public int numLossCallsZoom;
+	public int numGradCallsZoom;
 	
 	
-	
-	public int getNoCalls() {
+	public int getNoCalls() 
+	{
 		return noCalls;
 	}
 
-	public void setNoCalls(int noCalls) {
+	public void setNoCalls(int noCalls) 
+	{
 		this.noCalls = noCalls;
 	}
 
@@ -48,6 +55,7 @@ public class ConjugateGradientOptimizer implements Optimizer
 		this.lineIteration = lineIteration;
 		this.noCalls = 0;
 		gd = new LeastSquaresGradient();
+		up = new SimpleUpdater();
 		
 		
 	}
@@ -65,6 +73,7 @@ public class ConjugateGradientOptimizer implements Optimizer
 		Vector wOld = null;
 		double beta = 0.0;
 		double nextAlpha = 0.0;
+		da.cache();
 		
 		
 		while(i <= numIteration){
@@ -81,17 +90,22 @@ public class ConjugateGradientOptimizer implements Optimizer
 			 
 			 nextAlpha = strongWolfe(da, w, wOld, sz, jsc, currGrad, d);
 				 
-			 System.out.println("alpha for iteration "+i+" is "+nextAlpha);
+			 //System.out.println("alpha for iteration "+i+" is "+nextAlpha);
+			 
 			 
 			 //calculate the new parameter
-			 double tempW[] = new double[currGrad.size()];
+			 /*double tempW[] = new double[currGrad.size()];
 			 Vector newW = Vectors.dense(tempW);
 			 BLAS.copy(w, newW);
-			 BLAS.axpy(nextAlpha, d, newW);
-			 System.out.println("The value after "+ i +" iteration is"+w.toString());
+			 BLAS.axpy(nextAlpha, d, newW);*/
+			 
+			 //calulate newW using updater
+			 Tuple2<Vector,Object> t = up.compute(w, d, -nextAlpha*Math.sqrt(i), i, 0.1);
+			 Vector newW = t._1();
+			 //System.out.println("The value after "+ i +" iteration is"+w.toString());
 			 
 			 //convergence check
-			 if(isConverged(w, newW, 0.001))
+			 if(isConverged(w, newW, 0.0000001))
 				 return newW;
 			 
 			 
@@ -103,7 +117,7 @@ public class ConjugateGradientOptimizer implements Optimizer
 			 BLAS.scal(-1.0, currGrad);
 			 BLAS.axpy(1.0, nextGrad, currGrad);
 			 beta = BLAS.dot(nextGrad, currGrad) / BLAS.dot(d,currGrad);
-			 System.out.println("beta value at "+i+" iteration is "+beta);
+			 //System.out.println("beta value at "+i+" iteration is "+beta);
 			 
 			
 			 BLAS.scal(beta, d);
@@ -118,6 +132,14 @@ public class ConjugateGradientOptimizer implements Optimizer
 		
 	}
 	
+	public Updater getUp() {
+		return up;
+	}
+
+	public void setUp(Updater up) {
+		this.up = up;
+	}
+
 	private boolean isConverged(Vector oldW, Vector newW,double con)
 	{
 		BLAS.axpy(-1.0, newW, oldW);
@@ -188,38 +210,6 @@ public class ConjugateGradientOptimizer implements Optimizer
 		return newGrad;
 	}
 	
-	public double secantLineSearch(JavaRDD<Tuple2<Object, Vector>> da, 
-									JavaSparkContext jsc, Vector w,
-									Vector d, final Broadcast<Double> sz)
-	{
-		double alphaOld = 0.0;
-		double alphaCurr = 1;
-		double alphaNew = 0.0;
-		
-		double gOld = computeG(da, jsc, w, d, sz, alphaOld);
-		double gCurr =0.0;
-		int i = 1;
-		
-		while(i <= lineIteration){
-			
-			gCurr = computeG(da, jsc, w, d, sz, alphaCurr);
-			alphaNew = alphaCurr - gCurr*((alphaCurr-alphaOld) / (gCurr-gOld));
-			
-			if(alphaNew < 0)
-				return 0.0001;
-			
-			if(Math.abs(alphaNew - alphaCurr) <= lineConvTol)
-				return alphaNew;
-			
-			alphaOld = alphaCurr;
-			alphaCurr = alphaNew;
-			gOld = gCurr;
-			
-			i++;
-		}
-
-		return alphaCurr;
-	}
 	
 	
 	public double computeG(JavaRDD<Tuple2<Object, Vector>> da, 
@@ -246,7 +236,7 @@ public class ConjugateGradientOptimizer implements Optimizer
 				Tuple2<Vector,Object> grad = gd.compute(features, (Double)in._1, bw.getValue());
 				BLAS.scal(1.0/sz.getValue(), grad._1);
 				double loss = (Double)grad._2;
-				return loss * (1/sz.getValue());
+				return loss* (1/sz.getValue());
 			}
 		});
 		
@@ -264,36 +254,7 @@ public class ConjugateGradientOptimizer implements Optimizer
 		
 	}
 	
-	public double getArmigo(JavaRDD<Tuple2<Object, Vector>> da, Vector w, final Broadcast<Double> sz,
-			JavaSparkContext jsc,Vector currGrad,
-			Vector d)
-	{
-		double fk = getLoss(da, w, sz, jsc);
-		double alpha = 1.0;
-		double r = 0.5;
-		
-		double c1 = 0.0001;
-		double temp = BLAS.dot(currGrad, d);
-		double vrhs = alpha*c1*temp;
-		
-		Vector tempLHS = d.copy();
-		BLAS.scal(alpha, tempLHS);
-		BLAS.axpy(1.0, w, tempLHS);
-		double lhs = getLoss(da, tempLHS, sz, jsc);
-		
-		while(lhs > fk+vrhs)
-		{
-			alpha = r *alpha;
-			
-			tempLHS = d.copy();
-			BLAS.scal(alpha, tempLHS);
-			BLAS.axpy(1.0, w, tempLHS);
-			lhs = getLoss(da, tempLHS, sz, jsc);
-			
-			vrhs = alpha*c1*temp;
-		}
-		return alpha;
-	}
+	
 	
 	
 	/**
@@ -306,18 +267,23 @@ public class ConjugateGradientOptimizer implements Optimizer
 			Vector d)
 	{
 		double c1 = 0.0001;
-		double c2 = 0.5;
+		double c2 = 0.1;
 		
 		double alpha0 = 0.0;
 		double phi0 = getLoss(da, w, sz, jsc);
+		numLossCallBracket++;
 		double phiA0 = 0.0;
 		double phiA1 = 0.0;
 		double derPhi0 = BLAS.dot(d, currGrad);
 		double alpha1 = 0.0;
 		double alpha2 = 0.0;
+		double derPhiA0 = 0.0;
+		double derPhiA1 = 0.0;
 		
-		if(wOld != null && derPhi0 != 0)
+		if(wOld != null && derPhi0 != 0){
 			alpha1 = Math.min(1.0, 2*1.01*(phi0-getLoss(da, wOld, sz, jsc))/derPhi0);
+			numLossCallBracket++;
+		}
 		else
 			alpha1 = 1.0;
 		
@@ -325,13 +291,16 @@ public class ConjugateGradientOptimizer implements Optimizer
 			alpha1 = 1.0;
 		
 		phiA0 = phi0;
+		derPhiA0 = derPhi0;
 		
 		//some optimization can be done
-		Vector temp = d.copy();
-		BLAS.scal(alpha1, temp);
-		BLAS.axpy(1.0, w, temp);
+		Vector temp = w.copy();
+		//BLAS.scal(alpha1, temp);
+		BLAS.axpy(alpha1, d, temp);
 		
 		phiA1 = getLoss(da, temp, sz, jsc);
+		numLossCallBracket++;
+		
 		
 		int maxIter = 10;
 		int i = 1;
@@ -340,25 +309,29 @@ public class ConjugateGradientOptimizer implements Optimizer
 			
 			if(phiA1 > phi0 + c1*alpha1*derPhi0 ||
 			  (phiA1 >= phiA0 && i > 1)){
-				return zoom(da, w, sz, jsc, currGrad, d, alpha0, alpha1,phi0,derPhi0,phiA0,phiA1);
+				return zoom(da, w, sz, jsc, currGrad, d, alpha0, alpha1,phi0,derPhi0,phiA0,phiA1,derPhiA0);
 			}
 			
-			double derPhiA1 = computeG(da, jsc, w, d, sz, alpha1);
+			derPhiA1 = computeG(da, jsc, w, d, sz, alpha1);
+			numGradCallsBracket++;
 			if(Math.abs(derPhiA1) <= -c2 * derPhi0)
 				return alpha1;
 			
 			if(derPhiA1 >=0)
-				return zoom(da, w, sz, jsc, currGrad, d, alpha1, alpha0,phi0,derPhi0,phiA1,phiA0);
+				return zoom(da, w, sz, jsc, currGrad, d, alpha1, alpha0,phi0,derPhi0,phiA1,phiA0,derPhiA1);
 			
 			alpha2 = 2*alpha1;
 			alpha0 = alpha1;
 			alpha1 = alpha2;
 			phiA0 = phiA1;
 			
+			derPhiA0 = derPhiA1;
+			
 			//some optimization can be done
-			temp = d.copy();
-			BLAS.scal(alpha1, temp);
-			BLAS.axpy(1.0, w, temp);
+			temp = w.copy();
+			//BLAS.scal(alpha1, temp);
+			BLAS.axpy(alpha1, d, temp);
+			numLossCallBracket++;
 			phiA1 = getLoss(da, temp, sz, jsc);
 			i += 1;
 		}
@@ -366,30 +339,57 @@ public class ConjugateGradientOptimizer implements Optimizer
 		return alpha1;
 	}
 	
+	public Gradient getGd() {
+		return gd;
+	}
+
+	public void setGd(Gradient gd) {
+		this.gd = gd;
+	}
+
 	public double zoom(JavaRDD<Tuple2<Object, Vector>> da, Vector w, final Broadcast<Double> sz,
 			JavaSparkContext jsc,Vector currGrad,
 			Vector d,double alphaLow, double alphaHigh,
 			double phi0,double derPhi0,
-			double phiAL,double phiAH)
+			double phiAL,double phiAH,double derPhiAL)
 	{
 		double c1 = 0.0001;
 		double c2 = 0.1;
 		double alphaj = 0.0;
 		double phiAlphaj = 0.0;
 		double derPhiAlphaj = 0.0;
+		double delta2 = 0.1;
+		double a = alphaLow;
+		double b = alphaHigh;
+		double diff = 0.0;
+		
 		Vector temp = null;
 		int maxIter = 50;
 		int i=1;
+		
+		
+		
 		while(true){
 			
-			alphaj = (alphaLow+alphaHigh)/2;
+			diff = alphaHigh - alphaLow ;
+			if(diff < 0){
+				a = alphaHigh;
+				b = alphaLow;
+			}
+			
+			alphaj = quadridicInterpolate(alphaLow, alphaHigh, phiAL, phiAH, derPhiAL);
+			double qchk = diff * delta2;
+			
+			if(alphaj < 0 || alphaj > b-qchk || alphaj < a+qchk)
+				alphaj = alphaLow + 0.5 *diff;
 			
 			//some optimization can be done
-			temp = d.copy();
-			BLAS.scal(alphaj, temp);
-			BLAS.axpy(1.0, w, temp);
+			temp = w.copy();
+			//BLAS.scal(alphaj, temp);
+			//BLAS.axpy(1.0, w, temp);
+			BLAS.axpy(alphaj, d, temp);
 			phiAlphaj = getLoss(da, temp, sz, jsc);
-			
+			numLossCallsZoom++;
 			if(phiAlphaj > phi0 + c1*alphaj*derPhi0 ||
 			  phiAlphaj >= phiAL){
 				alphaHigh = alphaj;
@@ -398,6 +398,7 @@ public class ConjugateGradientOptimizer implements Optimizer
 			
 			else{
 				derPhiAlphaj = computeG(da, jsc, w, d, sz, alphaj);
+				numGradCallsZoom++;
 				if(Math.abs(derPhiAlphaj) <= -c2 * derPhi0)
 					return alphaj;
 				if(derPhiAlphaj*(alphaHigh-alphaLow) >= 0){
@@ -406,12 +407,31 @@ public class ConjugateGradientOptimizer implements Optimizer
 				}
 				alphaLow = alphaj;
 				phiAL = phiAlphaj;
+				derPhiAL = derPhiAlphaj;
 			}
 			i++;
 			if(i > maxIter)
 				return alphaj;
 		}
 		
-		
 	}
+	
+	public double quadridicInterpolate(double a, double b,
+									   double fa, double fb,double fpa)
+	{
+		try{
+			double D = fa;
+			double C = fpa;
+			double db = b-a;
+		    double B = (fb - D - C * db) / (db * db);
+		
+			return a-C/(2.0*B);
+		}
+		catch(ArithmeticException ex)
+		{
+			return -1;
+		}
+	}
+	
+	
 }
